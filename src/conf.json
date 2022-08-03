@@ -1,0 +1,18 @@
+{
+    "network": {
+		"mesh_credentials": {
+			"ssid": "lcarnevale-mesh",
+			"passwd": "d0s0m3th1ngn1ce!"
+		},
+		"rendezvous": {
+			"port": 5555
+		},
+		"peer": {
+			"source_port": 5001,
+			"destination_port": 5002
+		}
+	},
+	"hardware": {
+		"builtin_led": 2
+	}
+}
