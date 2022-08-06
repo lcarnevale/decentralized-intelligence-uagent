@@ -157,20 +157,16 @@ class NetworkManager(object):
 		if self.__is_rendezvous:
 			_thread.start_new_thread(self.__rendezvous_job, ())
 		_thread.start_new_thread(self.__listener_job, ())
-		# time.sleep(2)
-		# _thread.start_new_thread(self.__peer_sync_job, ())
 		self.__node_sync_timer.init(
-			period=1000 * 10,
+			period=1000 * 30,
 			mode=Timer.PERIODIC,
 			callback=lambda _: _thread.start_new_thread(self.__peer_sync_job, ())
 		)
-		# time.sleep(2)
 		self.__sender_timer.init(
-			period=1000 * 30,
+			period=1000 * 75,
 			mode=Timer.PERIODIC,
 			callback=lambda _: _thread.start_new_thread(self.__sender_job, ())
-		)
-		# _thread.start_new_thread(self.__sender_job, ())
+		) # for testing purposing
 
 	def __rendezvous_job(self):
 		while True:
@@ -182,25 +178,25 @@ class NetworkManager(object):
 			client_node_id = data_json['node_id']
 			
 			if client_node_id not in self.__neighbours:
-				print('new connection from %s - %s:%s' % (data_json['node_id'], address[0], address[1]))
-			self.__neighbours[data_json['node_id']] = {
+				print('new connection from %s - %s:%s' % (client_node_id, address[0], address[1]))
+			self.__neighbours[client_node_id] = {
 				"host": address[0], 
 				"source_port": self.__peer_source_port,
 				"destination_port": address[1]
 			}
 
 			neighbours_str = json.dumps(self.__neighbours)
-			msg = '{"node_id": %s, "type": "node_sync_reply", "neighbours": %s}' % (self.__node_manager.id, neighbours_str)
+			msg = '{"node_id": "%s", "type": "node_sync_reply", "neighbours": %s}' % (self.__node_manager.id, neighbours_str)
 			self.__sock_rdv.sendto(msg.encode('utf-8'), (address[0], self.__peer_source_port))
 		_thread.exit()
 
 	def __peer_sync_job(self):
 		print("sending peer sync ...")
 		if self.__is_rendezvous:
-			msg = b'{"node_id": %s, "type": "node_sync_request", "gateway": true}' % (self.__node_manager.id)
+			msg = b'{"node_id": "%s", "type": "node_sync_request", "gateway": true}' % (self.__node_manager.id)
 			self.__sock_peer_send.sendto(msg, (self.ap_gateway, self.__rendezvous_port))
 		else:
-			msg = b'{"node_id": %s, "type": "node_sync_request"}' % (self.__node_manager.id)
+			msg = b'{"node_id": "%s", "type": "node_sync_request"}' % (self.__node_manager.id)
 			self.__sock_peer_send.sendto(msg, (self.sta_gateway, self.__rendezvous_port))
 		_thread.exit()
 
@@ -220,7 +216,7 @@ class NetworkManager(object):
 	def __sender_job(self):
 		neighbour = random.choice(list(self.__neighbours.keys()))
 		print("sending TBD message to %s" % (neighbour))
-		msg = '{"node_id": %s,"type": "tbd"}' % (self.__node_manager.id)
+		msg = '{"node_id": "%s","type": "tbd"}' % (self.__node_manager.id)
 		self.send_unicast(msg, neighbour) # manda su source_port
 		_thread.exit()
 

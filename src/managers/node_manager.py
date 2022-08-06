@@ -37,7 +37,7 @@ class NodeManager(object):
 		print('node id: %s' % (self.id))
 		return self.__instance
 
-	def __create_id(self, mac_address):
+	def __create_id(self, mac_address) -> str:
 		"""Generate the node id
 
 		TODO: explain how this is created
@@ -50,7 +50,7 @@ class NodeManager(object):
 		"""
 		id = ''.join( mac_address.split(':')[2:] )
 		id = int(id, 16)
-		return id
+		return str(id)
 
 	def build_error_pin(self, pin):
 		self.__builtin_led = Pin(pin, Pin.OUT)
