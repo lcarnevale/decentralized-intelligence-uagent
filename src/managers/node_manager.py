@@ -1,3 +1,4 @@
+from machine import Pin
 from managers.ota_manager import OTAManager
 
 class NodeManager(object):
@@ -50,3 +51,14 @@ class NodeManager(object):
 		id = ''.join( mac_address.split(':')[2:] )
 		id = int(id, 16)
 		return id
+
+	def build_error_pin(self, pin):
+		self.__builtin_led = Pin(pin, Pin.OUT)
+		# permanent blue light is generic software error
+		self.__builtin_led.value(0)
+		return self.__instance
+
+
+	def turn_on_error_pin(self) -> None:
+		self.__builtin_led.value(1)
+		return

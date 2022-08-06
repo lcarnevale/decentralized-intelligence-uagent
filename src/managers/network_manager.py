@@ -1,4 +1,6 @@
 import json
+import time
+import random
 import socket
 import _thread
 import network
@@ -28,8 +30,11 @@ class NetworkManager(object):
 			self.__neighbours = {}
 			self.__is_rendezvous = False
 
-			self.__timer_fetch_nodes = Timer(-1)
-			self.__node_sync_timer = Timer(-1)
+			self.__timer_fetch_nodes = Timer(0)
+			self.__node_sync_timer = Timer(1)
+			self.__listener_timer = Timer(2)
+			self.__sender_timer = Timer(3)
+
 
 		return self.__instance
 	
@@ -74,11 +79,11 @@ class NetworkManager(object):
 			self.__set_rendezvous()
 			# self.__coordination_manager \
 				# .build_server_socket(port=self.__mesh_port)
-			self.__timer_fetch_nodes.init(
-				period=1000 * 60,
-				mode=Timer.PERIODIC,
-				callback=lambda _: _thread.start_new_thread(self.__fetch_nodes, ())
-			)
+			# self.__timer_fetch_nodes.init(
+			# 	period=1000 * 60,
+			# 	mode=Timer.PERIODIC,
+			# 	callback=lambda _: _thread.start_new_thread(self.__fetch_nodes, ())
+			# )
 			print(self.__wlan_ap.ifconfig())
 
 		self.__set_peer()
@@ -108,9 +113,11 @@ class NetworkManager(object):
 		return self.__wlan_sta.isconnected()
 
 	def __set_peer(self):
-		self._sock_peer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-		print('binding peer server ...')
-		self._sock_peer.bind(('0.0.0.0', self.__peer_source_port))
+		self.__sock_peer_recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+		self.__sock_peer_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+		print('binding peer ...')
+		self.__sock_peer_recv.bind(('0.0.0.0', self.__peer_source_port))
+		self.__sock_peer_send.bind(('0.0.0.0', self.__peer_destination_port))
 
 	def __set_access_point(self):
 		self.__wlan_ap.config(
@@ -149,18 +156,27 @@ class NetworkManager(object):
 		# self.__coordination_manager.start()
 		if self.__is_rendezvous:
 			_thread.start_new_thread(self.__rendezvous_job, ())
+		_thread.start_new_thread(self.__listener_job, ())
+		# time.sleep(2)
+		# _thread.start_new_thread(self.__peer_sync_job, ())
 		self.__node_sync_timer.init(
 			period=1000 * 10,
 			mode=Timer.PERIODIC,
 			callback=lambda _: _thread.start_new_thread(self.__peer_sync_job, ())
 		)
-		# _thread.start_new_thread(self.__listener_job, ())
+		# time.sleep(2)
+		self.__sender_timer.init(
+			period=1000 * 30,
+			mode=Timer.PERIODIC,
+			callback=lambda _: _thread.start_new_thread(self.__sender_job, ())
+		)
+		# _thread.start_new_thread(self.__sender_job, ())
 
 	def __rendezvous_job(self):
 		while True:
 			data, address = self.__sock_rdv.recvfrom(2048)
 			data = data.decode()
-			print('recv %s' % (data))
+			print('> rdv recv %s' % (data))
 
 			data_json = json.loads(data)
 			client_node_id = data_json['node_id']
@@ -169,34 +185,43 @@ class NetworkManager(object):
 				print('new connection from %s - %s:%s' % (data_json['node_id'], address[0], address[1]))
 			self.__neighbours[data_json['node_id']] = {
 				"host": address[0], 
-				"source_port": address[1],
-				"destination_port": self.__peer_destination_port
+				"source_port": self.__peer_source_port,
+				"destination_port": address[1]
 			}
 
-			encoded_data = json.dumps(self.__neighbours).encode('utf-8')
-			self.__sock_rdv.sendto(encoded_data, address)
+			neighbours_str = json.dumps(self.__neighbours)
+			msg = '{"node_id": %s, "type": "node_sync_reply", "neighbours": %s}' % (self.__node_manager.id, neighbours_str)
+			self.__sock_rdv.sendto(msg.encode('utf-8'), (address[0], self.__peer_source_port))
 		_thread.exit()
 
 	def __peer_sync_job(self):
+		print("sending peer sync ...")
 		if self.__is_rendezvous:
 			msg = b'{"node_id": %s, "type": "node_sync_request", "gateway": true}' % (self.__node_manager.id)
-			self._sock_peer.sendto(msg, (self.ap_gateway, self.__rendezvous_port))
+			self.__sock_peer_send.sendto(msg, (self.ap_gateway, self.__rendezvous_port))
 		else:
 			msg = b'{"node_id": %s, "type": "node_sync_request"}' % (self.__node_manager.id)
-			self._sock_peer.sendto(msg, (self.sta_gateway, self.__rendezvous_port))
-		
-		while True:
-			data = self._sock_peer.recv(2048)
-			data = data.decode()
-			print('recv %s' % (data))
-			break
+			self.__sock_peer_send.sendto(msg, (self.sta_gateway, self.__rendezvous_port))
 		_thread.exit()
 
 	def __listener_job(self):
+		print("listener starting ...")
 		while True:
-			data = self._sock_peer.recv(2048)
+			data = self.__sock_peer_recv.recv(2048)
+			if not data:
+				continue
 			data = data.decode()
-			print('recv %s' % (data))
+			print('> peer recv %s' % (data))
+			data_json = json.loads(data)
+			if data_json["type"] == "node_sync_reply":
+				self.__neighbours = data_json["neighbours"]
+		_thread.exit()
+
+	def __sender_job(self):
+		neighbour = random.choice(list(self.__neighbours.keys()))
+		print("sending TBD message to %s" % (neighbour))
+		msg = '{"node_id": %s,"type": "tbd"}' % (self.__node_manager.id)
+		self.send_unicast(msg, neighbour) # manda su source_port
 		_thread.exit()
 
 
@@ -207,7 +232,7 @@ class NetworkManager(object):
 			destination_node(int): node id
 		"""
 		host, port = self.__get_address(destination_node)
-		self._sock_peer.sendto(msg.encode(), (host, port))
+		self.__sock_peer_send.sendto(msg.encode(), (host, port))
 
 	def __get_address(self, destination_node):
 		host = self.__neighbours[destination_node]['host']
