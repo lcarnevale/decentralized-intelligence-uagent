@@ -4,6 +4,12 @@
 			"ssid": "lcarnevale-mesh",
 			"passwd": "d0s0m3th1ngn1ce!"
 		},
+		"access_point": {
+			"host_ip": "192.168.1.1",
+			"netmask": "255.255.255.0",
+			"host_gateway": "192.168.1.1",
+			"host_dns": "192.168.1.1"
+		},
 		"rendezvous": {
 			"port": 5555
 		},

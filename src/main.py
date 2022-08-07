@@ -11,6 +11,7 @@ def main():
 	
 		network_manager = NetworkManager() \
 			.build_mesh_credentials(conf['network']['mesh_credentials']) \
+			.build_access_point(conf['network']['access_point']) \
 			.build_rendezvous(conf['network']['rendezvous']) \
 			.build_peer(conf['network']['peer'])
 

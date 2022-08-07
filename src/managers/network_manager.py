@@ -23,33 +23,41 @@ class NetworkManager(object):
 			print('creating the %s object ...' % (self.__name__))
 			self.__instance = super(NetworkManager, self).__new__(self)
 			
-			self.__wlan_sta = network.WLAN(network.STA_IF)
-			self.__wlan_ap = network.WLAN(network.AP_IF)
+			self.__nic_sta = network.WLAN(network.STA_IF)
+			self.__nic_ap = network.WLAN(network.AP_IF)
 			self.__node_manager = NodeManager()
 
 			self.__neighbours = {}
+			self.__neighbours_sta = {}
+			self.__neighbours_ap = {}
+
 			self.__is_rendezvous = False
 
 			self.__timer_fetch_nodes = Timer(0)
 			self.__node_sync_timer = Timer(1)
-			self.__listener_timer = Timer(2)
-			self.__sender_timer = Timer(3)
-
+			self.__sender_timer = Timer(2)
 
 		return self.__instance
 	
-	def build_mesh_credentials(self, mesh_credentials):
-		self.__mesh_ssid = mesh_credentials['ssid']
-		self.__mesh_passwd = mesh_credentials['passwd']
+	def build_mesh_credentials(self, conf):
+		self.__mesh_ssid = conf['ssid']
+		self.__mesh_passwd = conf['passwd']
 		return self.__instance
 
-	def build_rendezvous(self, rendezvous_conf):
-		self.__rendezvous_port = rendezvous_conf['port']
+	def build_access_point(self, conf):
+		self.__default_access_point_ip = conf['host_ip']
+		self.__default_access_point_netmask = conf['netmask']
+		self.__default_access_point_gateway = conf['host_gateway']
+		self.__default_access_point_dns = conf['host_dns']
 		return self.__instance
 
-	def build_peer(self, peer_conf):
-		self.__peer_source_port = peer_conf['source_port']
-		self.__peer_destination_port = peer_conf['destination_port']
+	def build_rendezvous(self, conf):
+		self.__rendezvous_port = conf['port']
+		return self.__instance
+
+	def build_peer(self, conf):
+		self.__peer_source_port = conf['source_port']
+		self.__peer_destination_port = conf['destination_port']
 		return self.__instance
 	
 		
@@ -59,39 +67,37 @@ class NetworkManager(object):
 		Returns:
 			(str) node's mac addresses
 		"""
-		mac_address_bytes = self.__wlan_sta.config('mac')
+		mac_address_bytes = self.__nic_sta.config('mac')
 		mac_address_str = ubinascii.hexlify(mac_address_bytes,':').decode()
 		return mac_address_str
 
 
 	def setup(self):
-		# self.__coordination_manager = CoordinationManager()
-
-		self.__wlan_sta.active(True)
+		self.__station_gateway = None
 		if self.__network_exists():
-			self.__set_station()
-			# self.__coordination_manager \
-				# .build_client_socket(host=self.sta_gateway, port=self.__mesh_port)
-			print(self.__wlan_sta.ifconfig())
-		else: # network not exists
-			self.__wlan_ap.active(True)
-			self.__set_access_point()
-			self.__set_rendezvous()
-			# self.__coordination_manager \
-				# .build_server_socket(port=self.__mesh_port)
-			# self.__timer_fetch_nodes.init(
-			# 	period=1000 * 60,
-			# 	mode=Timer.PERIODIC,
-			# 	callback=lambda _: _thread.start_new_thread(self.__fetch_nodes, ())
-			# )
-			print(self.__wlan_ap.ifconfig())
+			self.__station_gateway = self.__set_station()
+		self.__access_point_gateway = self.__set_access_point()
+		self.__set_rendezvous()
+		self.__timer_fetch_nodes.init(
+			period=1000 * 50,
+			mode=Timer.PERIODIC,
+			callback=lambda _: _thread.start_new_thread(self.__fetch_nodes, ())
+		)
+
+		print(self.__nic_sta.ifconfig())
+		print(self.__nic_ap.ifconfig())
 
 		self.__set_peer()
-		# self.__coordination_manager.setup()
 
 	def __network_exists(self) -> bool:
+		"""Scan for default network.
+
+		Returns:
+			(bool) True if network exists, False otherwise.
+		"""
+		self.__nic_sta.active(True)
 		print("scan for %s network ..." % (self.__mesh_ssid))
-		for (ssid, _, __, ___, ___, ____) in self.__wlan_sta.scan():
+		for (ssid, _, _, _, _, _) in self.__nic_sta.scan():
 			ssid = ssid.decode()
 			if ssid == self.__mesh_ssid:
 				print("%s network already exists" % (self.__mesh_ssid))
@@ -100,17 +106,83 @@ class NetworkManager(object):
 		return False
 
 	def __set_station(self) -> bool:
+		"""Connect to default network.
+
+		Returns:
+			(str) IP address of station gateway.
 		"""
+		self.__nic_sta.active(True)
+		if not self.__nic_sta.isconnected():
+			print('connecting to %s network ...' % (self.__mesh_ssid))
+			self.__nic_sta.connect(self.__mesh_ssid, self.__mesh_passwd)
+			while not self.__nic_sta.isconnected():
+				pass # TODO: define timeout
+			print('connection to %s station network is successful' % (self.__mesh_ssid))
+		_, _, gateway, _ = self.__nic_sta.ifconfig()
+		return gateway
+
+	def __set_access_point(self):
+		"""Create an access point with default ssid and password.
+
+		The method updates the default access point configuration if there is
+		a conflict between the default access point gateway and the station
+		gateway.
+
+		Returns:
+			(str) IP address of access point gateway.
 		"""
-		self.__wlan_sta.active(True)
-		if not self.__wlan_sta.isconnected():
-			print('connecting to network %s ...' % (self.__mesh_ssid))
-			self.__wlan_sta.connect(self.__mesh_ssid, self.__mesh_passwd)
-			while not self.__wlan_sta.isconnected():
-				pass
-			print('station %s network connection is successful' % (self.__mesh_ssid))
-		self.__sta_ip, _, self.sta_gateway, _ = self.__wlan_sta.ifconfig()
-		return self.__wlan_sta.isconnected()
+		self.__nic_ap.active(True)
+		self.__nic_ap.config(
+			essid = self.__mesh_ssid, 
+			password = self.__mesh_passwd,
+			authmode = 3,
+			hidden = False # TODO: make it hidden
+		)
+		access_point_configuration = (
+			self.__default_access_point_ip, 
+			self.__default_access_point_netmask,
+			self.__default_access_point_gateway,
+			self.__default_access_point_dns
+		)
+		if self.__gateway_conflict_exists():
+			access_point_configuration = self.__update_access_point_configuration()
+		self.__nic_ap.ifconfig(access_point_configuration)
+
+		print('creating %s access point  ...' % (self.__mesh_ssid))
+		while self.__nic_ap.active() == False:
+			pass
+		_, _, gateway, _ = self.__nic_ap.ifconfig()
+		print('creation of %s access point is completed' % (self.__mesh_ssid))
+		return gateway
+
+	def __gateway_conflict_exists(self) -> bool:
+		"""Check if station and access point gateway are the same.
+		
+		Returns:
+			(bool) True if there is a conflict, False otherwise.
+		"""
+		if self.__station_gateway == self.__default_access_point_gateway:
+			return True
+		return False
+
+	def __update_access_point_configuration(self) -> tuple:
+		octets = self.__default_access_point_gateway.split('.')
+		first, second, third, fourth = octets
+		third_target = int(third)
+		if third_target > 0: # 1 or more
+			third_target -= 1
+		else:
+			third_target += 1
+		octets_target = (first, second, str(third_target), fourth)
+		print(octets_target)
+		target_gateway = '.'.join(octets_target)
+
+		ip = target_gateway
+		netmask = self.__default_access_point_netmask
+		gateway = target_gateway
+		dns = target_gateway
+
+		return (ip, netmask, gateway, dns)
 
 	def __set_peer(self):
 		self.__sock_peer_recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -118,19 +190,6 @@ class NetworkManager(object):
 		print('binding peer ...')
 		self.__sock_peer_recv.bind(('0.0.0.0', self.__peer_source_port))
 		self.__sock_peer_send.bind(('0.0.0.0', self.__peer_destination_port))
-
-	def __set_access_point(self):
-		self.__wlan_ap.config(
-			essid=self.__mesh_ssid, 
-			password=self.__mesh_passwd,
-			authmode=3,
-			hidden=False
-		)
-		print('set up access point %s ...' % (self.__mesh_ssid))
-		while self.__wlan_ap.active() == False:
-			pass
-		self.__ap_ip, _, self.ap_gateway, _ = self.__wlan_ap.ifconfig()
-		print('access point %s connection is successful' % (self.__mesh_ssid))
 
 	def __set_rendezvous(self):
 		"""Set up a rendez vous server.
@@ -140,23 +199,22 @@ class NetworkManager(object):
 		self.__sock_rdv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 		print('binding rendezvous server ...')
 		self.__sock_rdv.bind(('0.0.0.0', self.__rendezvous_port))
-		self.__is_rendezvous = True
 
 	def __fetch_nodes(self) -> None:
-		print('fetching stations ...')
-		for station in self.__wlan_ap.status('stations'):
+		print('> info fetching stations ...')
+		for station in self.__nic_ap.status('stations'):
 			mac_address_str = ubinascii.hexlify(station[0],':').decode()
 			id = ''.join( mac_address_str.split(':')[2:] )
 			id = int(id, 16)
-			print("%s %s" % (id, mac_address_str))
+			print("> info %s %s" % (id, mac_address_str))
+		print('> info neighbours %s' % (self.__neighbours))
 		_thread.exit()
 
 
 	def start(self):
 		# self.__coordination_manager.start()
-		if self.__is_rendezvous:
-			_thread.start_new_thread(self.__rendezvous_job, ())
-		_thread.start_new_thread(self.__listener_job, ())
+		_thread.start_new_thread(self.__rendezvous_job, ())
+		_thread.start_new_thread(self.__peer_job, ())
 		self.__node_sync_timer.init(
 			period=1000 * 30,
 			mode=Timer.PERIODIC,
@@ -166,7 +224,7 @@ class NetworkManager(object):
 			period=1000 * 75,
 			mode=Timer.PERIODIC,
 			callback=lambda _: _thread.start_new_thread(self.__sender_job, ())
-		) # for testing purposing
+		) # for testing purposing only
 
 	def __rendezvous_job(self):
 		while True:
@@ -179,28 +237,18 @@ class NetworkManager(object):
 			
 			if client_node_id not in self.__neighbours:
 				print('new connection from %s - %s:%s' % (client_node_id, address[0], address[1]))
-			self.__neighbours[client_node_id] = {
+			self.__neighbours_ap[client_node_id] = {
 				"host": address[0], 
 				"source_port": self.__peer_source_port,
 				"destination_port": address[1]
 			}
+			self.__update_neighbours()
 
-			neighbours_str = json.dumps(self.__neighbours)
+			neighbours_str = json.dumps(self.__neighbours_ap)
 			msg = '{"node_id": "%s", "type": "node_sync_reply", "neighbours": %s}' % (self.__node_manager.id, neighbours_str)
 			self.__sock_rdv.sendto(msg.encode('utf-8'), (address[0], self.__peer_source_port))
-		_thread.exit()
 
-	def __peer_sync_job(self):
-		print("sending peer sync ...")
-		if self.__is_rendezvous:
-			msg = b'{"node_id": "%s", "type": "node_sync_request", "gateway": true}' % (self.__node_manager.id)
-			self.__sock_peer_send.sendto(msg, (self.ap_gateway, self.__rendezvous_port))
-		else:
-			msg = b'{"node_id": "%s", "type": "node_sync_request"}' % (self.__node_manager.id)
-			self.__sock_peer_send.sendto(msg, (self.sta_gateway, self.__rendezvous_port))
-		_thread.exit()
-
-	def __listener_job(self):
+	def __peer_job(self):
 		print("listener starting ...")
 		while True:
 			data = self.__sock_peer_recv.recv(2048)
@@ -210,14 +258,31 @@ class NetworkManager(object):
 			print('> peer recv %s' % (data))
 			data_json = json.loads(data)
 			if data_json["type"] == "node_sync_reply":
-				self.__neighbours = data_json["neighbours"]
+				self.__neighbours_sta = data_json["neighbours"]
+				self.__update_neighbours()
+
+	def __update_neighbours(self) -> None:
+		self.__neighbours.update(self.__neighbours_sta)
+		self.__neighbours.update(self.__neighbours_ap)
+
+	def __peer_sync_job(self):
+		print("sending peer sync ...")
+		if self.__station_gateway:
+			msg = b'{"node_id": "%s", "type": "node_sync_request"}' % (self.__node_manager.id)
+			self.__sock_peer_send.sendto(msg, (self.__station_gateway, self.__rendezvous_port))
+		else:
+			msg = b'{"node_id": "%s", "type": "node_sync_request", "gateway": true}' % (self.__node_manager.id)
+			self.__sock_peer_send.sendto(msg, (self.__access_point_gateway, self.__rendezvous_port))
+		print("sending peer sync ... completed!")
 		_thread.exit()
 
+
 	def __sender_job(self):
-		neighbour = random.choice(list(self.__neighbours.keys()))
-		print("sending TBD message to %s" % (neighbour))
-		msg = '{"node_id": "%s","type": "tbd"}' % (self.__node_manager.id)
-		self.send_unicast(msg, neighbour) # manda su source_port
+		if self.__neighbours.keys():
+			neighbour = random.choice(list(self.__neighbours.keys()))
+			print("sending TBD message to %s" % (neighbour))
+			msg = '{"node_id": "%s","type": "tbd"}' % (self.__node_manager.id)
+			self.send_unicast(msg, neighbour) # manda su source_port
 		_thread.exit()
 
 
