@@ -8,7 +8,6 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-docs/
 build/
 develop-eggs/
 dist/
@@ -128,3 +127,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Documentation
+docs/
+
+# Security
+token
