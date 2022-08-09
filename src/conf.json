@@ -5,17 +5,15 @@
 			"passwd": "d0s0m3th1ngn1ce!"
 		},
 		"access_point": {
-			"host_ip": "192.168.1.1",
+			"host_ip": "192.168.0.1",
 			"netmask": "255.255.255.0",
-			"host_gateway": "192.168.1.1",
-			"host_dns": "192.168.1.1"
+			"host_gateway": "192.168.0.1",
+			"host_dns": "192.168.0.1"
 		},
-		"rendezvous": {
-			"port": 5555
-		},
-		"peer": {
-			"source_port": 5001,
-			"destination_port": 5002
+		"p2p": {
+			"rendezvous_port": 5555,
+			"peer_reader_port": 5001,
+			"peer_writer_port": 5002
 		}
 	},
 	"hardware": {

@@ -1,19 +1,17 @@
 import json
-import time
 import random
-import socket
 import _thread
 import network
 import ubinascii
 from machine import Timer
-from protocols.sntp.sntp_client import SNTP
+from managers.coordination.peer import Peer
+from managers.coordination.rendezvous import Rendezvous
 from managers.node_manager import NodeManager
-from managers.coordination_manager import CoordinationManager
 
 class NetworkManager(object):
 	__instance = None
 	
-	def __new__(self):
+	def __new__(self) -> __instance:
 		"""Implement Singleton class.
 		
 		Returns
@@ -22,44 +20,80 @@ class NetworkManager(object):
 		if self.__instance is None:
 			print('creating the %s object ...' % (self.__name__))
 			self.__instance = super(NetworkManager, self).__new__(self)
-			
 			self.__nic_sta = network.WLAN(network.STA_IF)
 			self.__nic_ap = network.WLAN(network.AP_IF)
 			self.__node_manager = NodeManager()
-
 			self.__neighbours = {}
 			self.__neighbours_sta = {}
 			self.__neighbours_ap = {}
-
-			self.__is_rendezvous = False
-
 			self.__timer_fetch_nodes = Timer(0)
-			self.__node_sync_timer = Timer(1)
 			self.__sender_timer = Timer(2)
-
 		return self.__instance
 	
-	def build_mesh_credentials(self, conf):
+	def build_mesh_credentials(self, conf) -> __instance:
 		self.__mesh_ssid = conf['ssid']
 		self.__mesh_passwd = conf['passwd']
 		return self.__instance
 
-	def build_access_point(self, conf):
+	def build_access_point(self, conf) -> __instance:
 		self.__default_access_point_ip = conf['host_ip']
 		self.__default_access_point_netmask = conf['netmask']
 		self.__default_access_point_gateway = conf['host_gateway']
 		self.__default_access_point_dns = conf['host_dns']
 		return self.__instance
 
-	def build_rendezvous(self, conf):
-		self.__rendezvous_port = conf['port']
+	def build_network(self, conf) -> __instance:
+		self.__peer_reader_port = conf['peer_reader_port']
+		self.__peer = Peer() \
+			.build_reader_socket(conf['peer_reader_port']) \
+			.build_writer_socket(conf['peer_writer_port']) \
+			.build_callback(self.__peer_callback)
+		self.__rendezvous_port = conf['rendezvous_port']
+		self.__rendezvous = Rendezvous() \
+			.build_socket(self.__rendezvous_port) \
+			.build_callback(self.__rendezvous_callback)
 		return self.__instance
 
-	def build_peer(self, conf):
-		self.__peer_source_port = conf['source_port']
-		self.__peer_destination_port = conf['destination_port']
-		return self.__instance
-	
+	def __peer_callback(self, data) -> None:
+		try:
+			# TODO: move to message protocol
+			data = json.loads(data)
+			if data["type"] == "node_sync_reply":
+				self.__neighbours_sta = data["neighbours"]
+				self.__update_neighbours()
+		except KeyError as e:
+			print("Warning: the key does not exist. %s" % (e))
+
+	def __rendezvous_callback(self, data, address) -> None:
+		try:
+			# TODO: move to message protocol
+			data = json.loads(data)
+			if data['type'] == 'peer_sync_request':
+				client_node_id = data['node_id']
+				if client_node_id not in self.__neighbours:
+					print('new connection from %s - %s:%s' % (client_node_id, address[0], address[1]))
+				self.__neighbours_ap[client_node_id] = {
+					"host": address[0], 
+					"source_port": self.__peer_reader_port,
+					"destination_port": address[1]
+				}
+				self.__update_neighbours()
+				neighbours_str = json.dumps(self.__neighbours_ap)
+				msg = '{"node_id": "%s", "type": "node_sync_reply", "neighbours": %s}' % (self.__node_manager.id, neighbours_str)
+				address = (address[0], self.__peer_reader_port)
+				self.__rendezvous.sync_reply(msg, address)
+		except KeyError as e:
+			print("Warning: the key does not exist. %s" % (e))
+
+	def __update_neighbours(self) -> None:
+		self.__neighbours.update(self.__neighbours_sta)
+		self.__neighbours.update(self.__neighbours_ap)
+
+
+	def destroy(self):
+		self.__peer.destroy()
+		self.__rendezvous.destroy()
+
 		
 	def get_mac_address(self):
 		"""Get MAC address.
@@ -72,22 +106,11 @@ class NetworkManager(object):
 		return mac_address_str
 
 
-	def setup(self):
-		self.__station_gateway = None
+	def setup(self) -> None:
+		self.__station_ip, self.__station_gateway = None, None
 		if self.__network_exists():
-			self.__station_gateway = self.__set_station()
+			self.__station_ip, self.__station_gateway = self.__set_station()
 		self.__access_point_gateway = self.__set_access_point()
-		self.__set_rendezvous()
-		self.__timer_fetch_nodes.init(
-			period=1000 * 50,
-			mode=Timer.PERIODIC,
-			callback=lambda _: _thread.start_new_thread(self.__fetch_nodes, ())
-		)
-
-		print(self.__nic_sta.ifconfig())
-		print(self.__nic_ap.ifconfig())
-
-		self.__set_peer()
 
 	def __network_exists(self) -> bool:
 		"""Scan for default network.
@@ -118,10 +141,10 @@ class NetworkManager(object):
 			while not self.__nic_sta.isconnected():
 				pass # TODO: define timeout
 			print('connection to %s station network is successful' % (self.__mesh_ssid))
-		_, _, gateway, _ = self.__nic_sta.ifconfig()
-		return gateway
+		ip, _, gateway, _ = self.__nic_sta.ifconfig()
+		return ip, gateway
 
-	def __set_access_point(self):
+	def __set_access_point(self) -> str:
 		"""Create an access point with default ssid and password.
 
 		The method updates the default access point configuration if there is
@@ -131,13 +154,6 @@ class NetworkManager(object):
 		Returns:
 			(str) IP address of access point gateway.
 		"""
-		self.__nic_ap.active(True)
-		self.__nic_ap.config(
-			essid = self.__mesh_ssid, 
-			password = self.__mesh_passwd,
-			authmode = 3,
-			hidden = False # TODO: make it hidden
-		)
 		access_point_configuration = (
 			self.__default_access_point_ip, 
 			self.__default_access_point_netmask,
@@ -147,7 +163,13 @@ class NetworkManager(object):
 		if self.__gateway_conflict_exists():
 			access_point_configuration = self.__update_access_point_configuration()
 		self.__nic_ap.ifconfig(access_point_configuration)
-
+		self.__nic_ap.active(True)
+		self.__nic_ap.config(
+			essid = self.__mesh_ssid, 
+			password = self.__mesh_passwd,
+			authmode = 3,
+			hidden = False # TODO: make it hidden
+		)
 		print('creating %s access point  ...' % (self.__mesh_ssid))
 		while self.__nic_ap.active() == False:
 			pass
@@ -184,21 +206,38 @@ class NetworkManager(object):
 
 		return (ip, netmask, gateway, dns)
 
-	def __set_peer(self):
-		self.__sock_peer_recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-		self.__sock_peer_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-		print('binding peer ...')
-		self.__sock_peer_recv.bind(('0.0.0.0', self.__peer_source_port))
-		self.__sock_peer_send.bind(('0.0.0.0', self.__peer_destination_port))
+	
+	def start(self):
+		self.__rendezvous.run_forever() # reader job
+		self.__peer.run_forever() # reader job
 
-	def __set_rendezvous(self):
-		"""Set up a rendez vous server.
+		message = self.__get_peer_sync_request_message()
+		sta_address = (self.__station_gateway, self.__rendezvous_port)
+		ap_address = (self.__access_point_gateway, self.__rendezvous_port)
+		self.__peer.sync_request(
+			message, 
+			sta_address, 
+			ap_address, 
+			period=1000 * 30
+		) # periodic writer job
+
+		self.__timer_fetch_nodes.init(
+			period=1000 * 50,
+			mode=Timer.PERIODIC,
+			callback=lambda _: _thread.start_new_thread(self.__fetch_nodes, ())
+		) # TODO: for testing purposing only
 		
-		It is based on UDP.
-		"""
-		self.__sock_rdv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-		print('binding rendezvous server ...')
-		self.__sock_rdv.bind(('0.0.0.0', self.__rendezvous_port))
+		# self.__sender_timer.init(
+		# 	period=1000 * 75,
+		# 	mode=Timer.PERIODIC,
+		# 	callback=lambda _: _thread.start_new_thread(self.__sender_job, ())
+		# ) # for testing purposing only
+	
+	def __get_peer_sync_request_message(self) -> bytes:
+		# TODO: move to message protocol
+		# TODO: start from json, convert to bytes
+		node_id = self.__node_manager.id
+		return b'{"node_id": "%s", "type": "peer_sync_request"}' % (node_id)
 
 	def __fetch_nodes(self) -> None:
 		print('> info fetching stations ...')
@@ -210,73 +249,6 @@ class NetworkManager(object):
 		print('> info neighbours %s' % (self.__neighbours))
 		_thread.exit()
 
-
-	def start(self):
-		# self.__coordination_manager.start()
-		_thread.start_new_thread(self.__rendezvous_job, ())
-		_thread.start_new_thread(self.__peer_job, ())
-		self.__node_sync_timer.init(
-			period=1000 * 30,
-			mode=Timer.PERIODIC,
-			callback=lambda _: _thread.start_new_thread(self.__peer_sync_job, ())
-		)
-		self.__sender_timer.init(
-			period=1000 * 75,
-			mode=Timer.PERIODIC,
-			callback=lambda _: _thread.start_new_thread(self.__sender_job, ())
-		) # for testing purposing only
-
-	def __rendezvous_job(self):
-		while True:
-			data, address = self.__sock_rdv.recvfrom(2048)
-			data = data.decode()
-			print('> rdv recv %s' % (data))
-
-			data_json = json.loads(data)
-			client_node_id = data_json['node_id']
-			
-			if client_node_id not in self.__neighbours:
-				print('new connection from %s - %s:%s' % (client_node_id, address[0], address[1]))
-			self.__neighbours_ap[client_node_id] = {
-				"host": address[0], 
-				"source_port": self.__peer_source_port,
-				"destination_port": address[1]
-			}
-			self.__update_neighbours()
-
-			neighbours_str = json.dumps(self.__neighbours_ap)
-			msg = '{"node_id": "%s", "type": "node_sync_reply", "neighbours": %s}' % (self.__node_manager.id, neighbours_str)
-			self.__sock_rdv.sendto(msg.encode('utf-8'), (address[0], self.__peer_source_port))
-
-	def __peer_job(self):
-		print("listener starting ...")
-		while True:
-			data = self.__sock_peer_recv.recv(2048)
-			if not data:
-				continue
-			data = data.decode()
-			print('> peer recv %s' % (data))
-			data_json = json.loads(data)
-			if data_json["type"] == "node_sync_reply":
-				self.__neighbours_sta = data_json["neighbours"]
-				self.__update_neighbours()
-
-	def __update_neighbours(self) -> None:
-		self.__neighbours.update(self.__neighbours_sta)
-		self.__neighbours.update(self.__neighbours_ap)
-
-	def __peer_sync_job(self):
-		print("sending peer sync ...")
-		if self.__station_gateway:
-			msg = b'{"node_id": "%s", "type": "node_sync_request"}' % (self.__node_manager.id)
-			self.__sock_peer_send.sendto(msg, (self.__station_gateway, self.__rendezvous_port))
-		else:
-			msg = b'{"node_id": "%s", "type": "node_sync_request", "gateway": true}' % (self.__node_manager.id)
-			self.__sock_peer_send.sendto(msg, (self.__access_point_gateway, self.__rendezvous_port))
-		print("sending peer sync ... completed!")
-		_thread.exit()
-
-
 	def __sender_job(self):
 		if self.__neighbours.keys():
 			neighbour = random.choice(list(self.__neighbours.keys()))
@@ -285,15 +257,6 @@ class NetworkManager(object):
 			self.send_unicast(msg, neighbour) # manda su source_port
 		_thread.exit()
 
-
-	def send_unicast(self, msg, destination_node):
-		"""
-		Args:
-			msg(str)
-			destination_node(int): node id
-		"""
-		host, port = self.__get_address(destination_node)
-		self.__sock_peer_send.sendto(msg.encode(), (host, port))
 
 	def __get_address(self, destination_node):
 		host = self.__neighbours[destination_node]['host']

@@ -1,5 +1,5 @@
 from machine import Pin
-from managers.ota_manager import OTAManager
+# from managers.ota_manager import OTAManager
 
 class NodeManager(object):
 	"""
@@ -18,9 +18,7 @@ class NodeManager(object):
 		if self.__instance is None:
 			print('creating the %s object ...' % (self.__name__))
 			self.__instance = super(NodeManager, self).__new__(self)
-			
-			self.ota = OTAManager()
-
+			# self.ota = OTAManager()
 		return self.__instance
 
 
@@ -54,8 +52,7 @@ class NodeManager(object):
 
 	def build_error_pin(self, pin):
 		self.__builtin_led = Pin(pin, Pin.OUT)
-		# permanent blue light is generic software error
-		self.__builtin_led.value(0)
+		self.__builtin_led.value(0) # permanent blue light is generic software error
 		return self.__instance
 
 
