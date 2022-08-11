@@ -29,7 +29,7 @@ def main():
 	except Exception as e:
 		# node_manager.turn_on_error_pin()
 		sys.print_exception(e)
-
+		
 		# service_manager.destroy()
 		# node_manager.destroy()
 		network_manager.destroy()

@@ -22,12 +22,12 @@ class NetworkManager(object):
 			self.__instance = super(NetworkManager, self).__new__(self)
 			self.__nic_sta = network.WLAN(network.STA_IF)
 			self.__nic_ap = network.WLAN(network.AP_IF)
+			self.__timer_fetch_nodes = Timer(0)
+			self.__sender_timer = Timer(2)
 			self.__node_manager = NodeManager()
 			self.__neighbours = {}
 			self.__neighbours_sta = {}
 			self.__neighbours_ap = {}
-			self.__timer_fetch_nodes = Timer(0)
-			self.__sender_timer = Timer(2)
 		return self.__instance
 	
 	def build_mesh_credentials(self, conf) -> __instance:
@@ -143,6 +143,7 @@ class NetworkManager(object):
 			print('connection to %s station network is successful' % (self.__mesh_ssid))
 		ip, _, gateway, _ = self.__nic_sta.ifconfig()
 		return ip, gateway
+		
 
 	def __set_access_point(self) -> str:
 		"""Create an access point with default ssid and password.
@@ -221,23 +222,23 @@ class NetworkManager(object):
 			period=1000 * 30
 		) # periodic writer job
 
-		self.__timer_fetch_nodes.init(
-			period=1000 * 50,
-			mode=Timer.PERIODIC,
-			callback=lambda _: _thread.start_new_thread(self.__fetch_nodes, ())
-		) # TODO: for testing purposing only
-		
-		# self.__sender_timer.init(
-		# 	period=1000 * 75,
+		# self.__timer_fetch_nodes.init(
+		# 	period=1000 * 50,
 		# 	mode=Timer.PERIODIC,
-		# 	callback=lambda _: _thread.start_new_thread(self.__sender_job, ())
-		# ) # for testing purposing only
+		# 	callback=lambda _: _thread.start_new_thread(self.__fetch_nodes, ())
+		# ) # TODO: for testing purposing only
+		
+		# # self.__sender_timer.init(
+		# # 	period=1000 * 75,
+		# # 	mode=Timer.PERIODIC,
+		# # 	callback=lambda _: _thread.start_new_thread(self.__sender_job, ())
+		# # ) # for testing purposing only
 	
 	def __get_peer_sync_request_message(self) -> bytes:
 		# TODO: move to message protocol
 		# TODO: start from json, convert to bytes
 		node_id = self.__node_manager.id
-		return b'{"node_id": "%s", "type": "peer_sync_request"}' % (node_id)
+		return '{"node_id": "%s", "type": "peer_sync_request"}' % (node_id)
 
 	def __fetch_nodes(self) -> None:
 		print('> info fetching stations ...')
