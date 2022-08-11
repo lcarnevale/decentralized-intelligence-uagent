@@ -1,5 +1,5 @@
 # SARDINE uAgent
-The SARDINE project, acronym of "SwARm-based eDge computiNg systEms", aims at building a multi-platform lightweight framework for collaborative nodes with decentralized edge intelligence. Ispired by nature, groups of nodes are organized like a swarm, emphasizing the edge-to-edge continuum of the device-edge-cloud paradigm. This supports a paradigm shift from programming enviroments for individual devices to dynamic and cooperating groups of nodes.
+The SARDINE project, acronym of "SwARm-based eDge computiNg systEms", aims at building a multi-platform lightweight framework for collaborative nodes with decentralized edge intelligence. Inspired by nature, groups of nodes are organized like a swarm, emphasizing the edge-to-edge continuum of the device-edge-cloud paradigm. This supports a paradigm shift from programming enviroments for individual devices to dynamic and cooperating groups of nodes.
 
 The SARDINE uAgent (read it as SARDINE micro-agent) is the agent version for microcontrollers. The implementation follows the guidelines of the SARDINE design, and it is fully integrate in the SARDINE ecosystem. 
 
