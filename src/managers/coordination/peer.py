@@ -78,24 +78,25 @@ class Peer(object):
 
     def sync_request(self, message, sta_address, ap_address, period = 1000 * 30):
         Timer(1).init(
-			period=period,
-			mode=Timer.PERIODIC,
-			callback=lambda _: _thread.start_new_thread(
+        period=period,
+        mode=Timer.PERIODIC,
+        callback=lambda _: _thread.start_new_thread(
                 self.__sync_request_job, (message, sta_address, ap_address)
             )
-		)
+        )   
+        
 
     def __sync_request_job(self, message, sta_address, ap_address):
         # TODO: I do not like at all the parameters
         print("sending peer sync ...")
         if sta_address[0]:
-            self.__sock_send.sendto(message, sta_address)
-        self.__sock_send.sendto(message, ap_address)
+            self.unicast(message, sta_address)
+        self.unicast(message, ap_address)
         # TODO: do test on double sendto
         print("sending peer sync ... completed")
         _thread.exit()
 
-    
+
     def unicast(self, message, address) -> None:
         """Send message to single node.
 
